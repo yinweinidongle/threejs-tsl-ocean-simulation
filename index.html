@@ -1,446 +1,183 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Three.js TSL/WebGPU 逼真海洋模拟 - Seedance Style</title>
-    <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: system-ui, sans-serif; }
-        #info { position: absolute; top: 10px; left: 10px; color: white; z-index: 100; background: rgba(0,0,0,0.6); padding: 12px; border-radius: 8px; font-size: 14px; }
-        #controls { position: absolute; top: 10px; right: 10px; background: rgba(0,0,0,0.7); padding: 15px; border-radius: 10px; color: white; z-index: 100; width: 260px; }
-        .control-group { margin-bottom: 12px; }
-        label { display: block; margin-bottom: 4px; font-size: 13px; }
-        input[type="range"] { width: 100%; }
-        #status { position: absolute; bottom: 10px; left: 10px; color: #0f0; font-size: 12px; z-index: 100; }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07131f">
+  <title>Three.js TSL 海洋模拟</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; background: #07131f; color: #eef8ff; }
+    canvas { display: block; width: 100%; height: 100%; }
+    .glass { position: fixed; z-index: 2; border: 1px solid rgba(170,220,255,.16); background: rgba(4,17,29,.68); box-shadow: 0 20px 50px rgba(0,0,0,.24); backdrop-filter: blur(18px); }
+    #intro { top: 24px; left: 24px; max-width: 420px; padding: 18px 20px; border-radius: 16px; pointer-events: none; }
+    #intro h1 { margin: 0 0 6px; font-size: clamp(20px,2.2vw,30px); letter-spacing: -.03em; }
+    #intro p { margin: 0; color: #a8c7da; font-size: 13px; line-height: 1.7; }
+    #panel { top: 24px; right: 24px; width: min(300px,calc(100vw - 48px)); padding: 20px; border-radius: 18px; }
+    #panel h2 { margin: 0 0 18px; font-size: 15px; letter-spacing: .08em; text-transform: uppercase; color: #cdeeff; }
+    .row { margin: 0 0 16px; }
+    .row label { display: flex; justify-content: space-between; margin-bottom: 8px; color: #a8c7da; font-size: 12px; }
+    .row output { color: #eefaff; font-variant-numeric: tabular-nums; }
+    input[type="range"] { width: 100%; height: 4px; appearance: none; border-radius: 999px; background: rgba(172,216,238,.2); accent-color: #56c8ff; }
+    input[type="range"]::-webkit-slider-thumb { width: 16px; height: 16px; appearance: none; border: 2px solid #d9f5ff; border-radius: 50%; background: #24aee9; box-shadow: 0 0 18px #2cbcff; }
+    input[type="color"] { width: 38px; height: 26px; padding: 2px; border: 1px solid rgba(255,255,255,.25); border-radius: 7px; background: transparent; }
+    .color-row { display: flex; align-items: center; justify-content: space-between; color: #a8c7da; font-size: 12px; }
+    #status { position: fixed; z-index: 3; left: 24px; bottom: 22px; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 999px; background: rgba(2,14,25,.72); color: #b7d5e5; font-size: 11px; backdrop-filter: blur(12px); }
+    #status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #f5be56; box-shadow: 0 0 10px currentColor; }
+    #status.ready::before { background: #55e6a5; }
+    #error { display: none; position: fixed; z-index: 4; inset: 50% auto auto 50%; width: min(520px,calc(100vw - 40px)); padding: 22px; transform: translate(-50%,-50%); border: 1px solid #a94b4b; border-radius: 16px; background: #1c1115; color: #ffd7d7; }
+    @media (max-width: 700px) { #intro { top: 14px; left: 14px; right: 14px; padding: 14px 16px; } #intro p { display: none; } #panel { top: auto; right: 14px; bottom: 14px; left: 14px; width: auto; padding: 14px 16px; } #panel h2 { margin-bottom: 10px; } .row { margin-bottom: 10px; } #status { display: none; } }
+  </style>
 </head>
 <body>
-    <div id="info">
-        <strong>Three.js + TSL/WebGPU 海洋模拟</strong><br>
-        鼠标拖拽旋转 | 滚轮缩放 | 空格切换自动旋转<br>
-        点击水面添加涟漪 (实验性)
-    </div>
-    
-    <div id="controls">
-        <h3 style="margin:0 0 12px 0; font-size:16px;">🌊 海洋参数</h3>
-        
-        <div class="control-group">
-            <label>波浪高度: <span id="waveHeightVal">2.5</span></label>
-            <input type="range" id="waveHeight" min="0.5" max="8" step="0.1" value="2.5">
-        </div>
-        
-        <div class="control-group">
-            <label>波浪速度: <span id="waveSpeedVal">1.0</span></label>
-            <input type="range" id="waveSpeed" min="0.2" max="3" step="0.1" value="1.0">
-        </div>
-        
-        <div class="control-group">
-            <label>风力方向 (度): <span id="windDirVal">45</span></label>
-            <input type="range" id="windDir" min="0" max="360" step="5" value="45">
-        </div>
-        
-        <div class="control-group">
-            <label>泡沫强度: <span id="foamVal">0.6</span></label>
-            <input type="range" id="foam" min="0" max="1.5" step="0.05" value="0.6">
-        </div>
-        
-        <div class="control-group">
-            <label>水面颜色</label>
-            <input type="color" id="waterColor" value="#0066aa">
-        </div>
-        
-        <div style="margin-top:15px; font-size:12px; opacity:0.8;">
-            WebGPU + TSL 实时着色器<br>
-            高级光学：Fresnel + 泡沫 + 次表面散射
-        </div>
-    </div>
-    
-    <div id="status">WebGPU 状态: 检测中...</div>
+  <section id="intro" class="glass">
+    <h1>TSL Ocean Lab</h1>
+    <p>拖动旋转 · 滚轮缩放 · 空格切换自动巡航 · R 重置视角<br>由 Three.js WebGPU Renderer 与 TSL 节点材质实时驱动</p>
+  </section>
+  <aside id="panel" class="glass">
+    <h2>Ocean controls</h2>
+    <div class="row"><label for="waveHeight">波浪高度 <output id="waveHeightVal">2.5</output></label><input id="waveHeight" type="range" min="0.5" max="7" step="0.1" value="2.5"></div>
+    <div class="row"><label for="waveSpeed">波浪速度 <output id="waveSpeedVal">1.0</output></label><input id="waveSpeed" type="range" min="0.2" max="3" step="0.1" value="1"></div>
+    <div class="row"><label for="windDir">风向 <output id="windDirVal">45°</output></label><input id="windDir" type="range" min="0" max="360" step="5" value="45"></div>
+    <div class="row"><label for="foam">泡沫强度 <output id="foamVal">0.6</output></label><input id="foam" type="range" min="0" max="1.4" step="0.05" value="0.6"></div>
+    <div class="color-row"><label for="waterColor">深水颜色</label><input id="waterColor" type="color" value="#075985"></div>
+  </aside>
+  <div id="status">正在初始化渲染器…</div>
+  <div id="error"></div>
 
-    <script type="importmap">
-    {
-        "imports": {
-            "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
-        }
+  <script type="importmap">
+  {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/webgpu":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/tsl":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"}}
+  </script>
+  <script type="module">
+    import * as THREE from 'three/webgpu';
+    import { color, mix, positionLocal, sin, smoothstep, uniform, vec3 } from 'three/tsl';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    const params = { waveHeight: 2.5, waveSpeed: 1, windDirection: 45, foamIntensity: .6, waterColor: '#075985' };
+    const state = { autoRotate: false };
+    const status = document.querySelector('#status');
+    const errorBox = document.querySelector('#error');
+    let renderer, scene, camera, controls, water;
+
+    const timeNode = uniform(0);
+    const heightNode = uniform(params.waveHeight);
+    const speedNode = uniform(params.waveSpeed);
+    const windNode = uniform(THREE.MathUtils.degToRad(params.windDirection));
+    const foamNode = uniform(params.foamIntensity);
+    const deepColorNode = uniform(new THREE.Color(params.waterColor));
+
+    async function init() {
+      renderer = new THREE.WebGPURenderer({ antialias: true, powerPreference: 'high-performance' });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.05;
+      await renderer.init();
+      document.body.prepend(renderer.domElement);
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x07131f);
+      scene.fog = new THREE.FogExp2(0x8bb8cc, .0034);
+      camera = new THREE.PerspectiveCamera(56, innerWidth / innerHeight, .1, 1200);
+      camera.position.set(58, 42, 82);
+      camera.lookAt(0, 0, 0);
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = .055;
+      controls.minDistance = 24;
+      controls.maxDistance = 260;
+      controls.maxPolarAngle = Math.PI * .49;
+      controls.target.set(0, 0, 0);
+      controls.update();
+
+      scene.add(new THREE.HemisphereLight(0xbde9ff, 0x09253b, 2.4));
+      const sun = new THREE.DirectionalLight(0xffe0b0, 3.2);
+      sun.position.set(-60, 90, 30);
+      scene.add(sun);
+      createSky();
+      createOcean();
+      bindControls();
+      addEventListener('resize', resize);
+      addEventListener('keydown', onKey);
+
+      const backend = navigator.gpu ? 'WebGPU' : 'WebGL 2 fallback';
+      status.textContent = `${backend} · TSL 节点材质运行中`;
+      status.classList.add('ready');
+      renderer.setAnimationLoop(render);
     }
-    </script>
-    
-    <script type="module">
-        import * as THREE from 'three';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-        import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 
-        let renderer, scene, camera, controls;
-        let waterMesh, waterMaterial;
-        let time = 0;
-        let autoRotate = false;
-        let ripples = [];
+    function createSky() {
+      const geometry = new THREE.SphereGeometry(650, 32, 16);
+      const material = new THREE.MeshBasicMaterial({ color: 0x8cc8df, side: THREE.BackSide, fog: false });
+      scene.add(new THREE.Mesh(geometry, material));
+    }
 
-        const params = {
-            waveHeight: 2.5,
-            waveSpeed: 1.0,
-            windDirection: 45,
-            foamIntensity: 0.6,
-            waterColor: '#0066aa'
-        };
+    function createOcean() {
+      const geometry = new THREE.PlaneGeometry(420, 420, 220, 220);
+      geometry.rotateX(-Math.PI / 2);
+      const x = positionLocal.x;
+      const z = positionLocal.z;
+      const wx = windNode.cos();
+      const wz = windNode.sin();
+      const alongWind = x.mul(wx).add(z.mul(wz));
+      const acrossWind = x.mul(wz.negate()).add(z.mul(wx));
+      const t = timeNode.mul(speedNode);
+      const waveA = sin(alongWind.mul(.072).sub(t.mul(1.15))).mul(heightNode.mul(.58));
+      const waveB = sin(acrossWind.mul(.13).add(t.mul(1.62))).mul(heightNode.mul(.27));
+      const waveC = sin(x.add(z).mul(.245).sub(t.mul(2.1))).mul(heightNode.mul(.1));
+      const elevation = waveA.add(waveB).add(waveC);
 
-        async function init() {
-            const statusEl = document.getElementById('status');
-            
-            // WebGPU 检查
-            if (!navigator.gpu) {
-                statusEl.textContent = '❌ 您的浏览器不支持 WebGPU，请使用最新 Chrome/Edge';
-                statusEl.style.color = '#f44';
-                // 降级到 WebGL 版本（简单 Gerstner）
-                initWebGLFallback();
-                return;
-            }
+      const material = new THREE.MeshStandardNodeMaterial({ metalness: .08, roughness: .2, side: THREE.DoubleSide });
+      material.positionNode = vec3(x, elevation, z);
+      const crest = smoothstep(heightNode.mul(.42), heightNode.mul(.82), elevation).mul(foamNode);
+      material.colorNode = mix(deepColorNode, color(0x83d9ed), crest);
+      material.roughnessNode = mix(uniform(.18), uniform(.62), crest);
+      water = new THREE.Mesh(geometry, material);
+      scene.add(water);
+    }
 
-            try {
-                renderer = new THREE.WebGPURenderer({ 
-                    antialias: true, 
-                    alpha: true,
-                    powerPreference: 'high-performance'
-                });
-                await renderer.init();
-                statusEl.textContent = '✅ WebGPU + TSL 已启用';
-                statusEl.style.color = '#0f0';
-            } catch (e) {
-                statusEl.textContent = '⚠️ WebGPU 初始化失败，使用 WebGL 降级版';
-                statusEl.style.color = '#fa0';
-                initWebGLFallback();
-                return;
-            }
+    function bindControls() {
+      const bindings = {
+        waveHeight: [heightNode, 'waveHeightVal', v => v.toFixed(1)],
+        waveSpeed: [speedNode, 'waveSpeedVal', v => v.toFixed(1)],
+        foam: [foamNode, 'foamVal', v => v.toFixed(2)]
+      };
+      for (const [id, [node, outputId, format]] of Object.entries(bindings)) {
+        document.querySelector(`#${id}`).addEventListener('input', e => {
+          const value = Number(e.target.value); params[id === 'foam' ? 'foamIntensity' : id] = value;
+          node.value = value; document.querySelector(`#${outputId}`).value = format(value);
+        });
+      }
+      document.querySelector('#windDir').addEventListener('input', e => {
+        params.windDirection = Number(e.target.value); windNode.value = THREE.MathUtils.degToRad(params.windDirection);
+        document.querySelector('#windDirVal').value = `${params.windDirection}°`;
+      });
+      document.querySelector('#waterColor').addEventListener('input', e => {
+        params.waterColor = e.target.value; deepColorNode.value.set(params.waterColor);
+      });
+    }
 
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-            document.body.appendChild(renderer.domElement);
+    function onKey(event) {
+      if (event.code === 'Space') { event.preventDefault(); state.autoRotate = !state.autoRotate; }
+      if (event.key.toLowerCase() === 'r') { camera.position.set(58, 42, 82); controls.target.set(0, 0, 0); controls.update(); }
+    }
+    function resize() { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); }
+    function render(timestamp) {
+      timeNode.value = timestamp * .001;
+      controls.autoRotate = state.autoRotate;
+      controls.autoRotateSpeed = .6;
+      controls.update();
+      renderer.render(scene, camera);
+    }
 
-            scene = new THREE.Scene();
-            scene.fog = new THREE.Fog(0x88aadd, 200, 600);
-
-            camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 2000);
-            camera.position.set(0, 35, 85);
-
-            controls = new OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
-            controls.dampingFactor = 0.08;
-            controls.maxPolarAngle = Math.PI * 0.95;
-            controls.minDistance = 10;
-            controls.maxDistance = 400;
-
-            // 灯光
-            const sunLight = new THREE.DirectionalLight(0xfff5e6, 1.8);
-            sunLight.position.set(80, 120, 60);
-            scene.add(sunLight);
-            
-            const ambient = new THREE.AmbientLight(0x445566, 0.6);
-            scene.add(ambient);
-
-            // 天空盒（简单渐变）
-            const skyGeo = new THREE.SphereGeometry(900, 32, 32);
-            const skyMat = new THREE.MeshBasicMaterial({ 
-                color: 0x88ccff, 
-                side: THREE.BackSide,
-                fog: false 
-            });
-            const sky = new THREE.Mesh(skyGeo, skyMat);
-            scene.add(sky);
-
-            // 创建 TSL 水面
-            createTSLWater();
-
-            // 事件监听
-            setupControls();
-            setupInteractions();
-
-            window.addEventListener('resize', onResize);
-            
-            // 初始参数同步
-            updateWaterParams();
-
-            animate();
-        }
-
-        function createTSLWater() {
-            const geometry = new THREE.PlaneGeometry(280, 280, 256, 256);
-            
-            // 使用 TSL 创建高级水面材质
-            waterMaterial = new THREE.MeshStandardMaterial({
-                color: params.waterColor,
-                metalness: 0.1,
-                roughness: 0.15,
-                envMapIntensity: 0.6,
-                flatShading: false
-            });
-
-            // TSL 着色器增强（Three.js 0.170+ 支持）
-            // 这里使用 onBeforeCompile 注入 TSL 风格的自定义着色（兼容性更好）
-            waterMaterial.onBeforeCompile = (shader) => {
-                shader.uniforms.time = { value: 0 };
-                shader.uniforms.waveHeight = { value: params.waveHeight };
-                shader.uniforms.waveSpeed = { value: params.waveSpeed };
-                shader.uniforms.windDir = { value: params.windDirection * Math.PI / 180 };
-                shader.uniforms.foamIntensity = { value: params.foamIntensity };
-
-                // 顶点着色器 - Gerstner 波浪 (TSL 风格)
-                shader.vertexShader = shader.vertexShader.replace(
-                    '#include <begin_vertex>',
-                    `
-                    #include <begin_vertex>
-                    
-                    float time = time;
-                    float waveHeight = waveHeight;
-                    float waveSpeed = waveSpeed;
-                    float windDir = windDir;
-                    
-                    vec2 wind = vec2(cos(windDir), sin(windDir));
-                    
-                    // 多层 Gerstner 波浪 (更真实)
-                    float y = 0.0;
-                    float steepness = 0.6;
-                    
-                    // 主波
-                    float k1 = 0.08;
-                    float w1 = sqrt(9.8 * k1);
-                    float phase1 = dot(wind * k1, position.xz) - w1 * time * waveSpeed;
-                    y += waveHeight * 0.6 * sin(phase1);
-                    
-                    // 次波
-                    float k2 = 0.15;
-                    float w2 = sqrt(9.8 * k2);
-                    float phase2 = dot(wind * k2 * 1.3, position.xz) - w2 * time * waveSpeed * 1.15;
-                    y += waveHeight * 0.35 * sin(phase2);
-                    
-                    // 细节波
-                    float k3 = 0.28;
-                    float w3 = sqrt(9.8 * k3);
-                    float phase3 = dot(wind * k3 * 0.7, position.xz) - w3 * time * waveSpeed * 0.85;
-                    y += waveHeight * 0.15 * sin(phase3);
-                    
-                    // 涟漪效果
-                    for(int i = 0; i < 4; i++) {
-                        if(ripples[i].w > 0.0) {
-                            float dist = distance(position.xz, ripples[i].xy);
-                            float ripplePhase = dist * 2.5 - ripples[i].z * 8.0;
-                            y += ripples[i].w * 1.8 * exp(-dist * 0.035) * sin(ripplePhase);
-                        }
-                    }
-                    
-                    transformed.y = y;
-                    `
-                );
-
-                // 片元着色器 - 高级光学效果
-                shader.fragmentShader = shader.fragmentShader.replace(
-                    '#include <dithering_fragment>',
-                    `
-                    #include <dithering_fragment>
-                    
-                    // Fresnel 反射
-                    vec3 viewDir = normalize(vViewPosition);
-                    float fresnel = pow(1.0 - max(dot(normalize(vNormal), viewDir), 0.0), 3.5);
-                    
-                    // 泡沫 (基于法线和高度)
-                    float foam = smoothstep(0.6, 1.4, abs(sin(transformed.y * 1.8 + time * 2.0))) * foamIntensity;
-                    foam *= smoothstep(1.8, 4.5, transformed.y + 2.0);
-                    
-                    // 次表面散射 (简单模拟)
-                    float subsurface = pow(max(0.0, dot(normalize(vNormal), vec3(0.0,1.0,0.0))), 2.0) * 0.4;
-                    
-                    // 最终颜色混合
-                    vec3 deepColor = vec3(0.02, 0.15, 0.35);
-                    vec3 foamColor = vec3(0.95, 0.97, 1.0);
-                    vec3 waterColorFinal = mix(deepColor, vec3(0.1, 0.45, 0.75), fresnel * 0.6 + 0.3);
-                    
-                    gl_FragColor.rgb = mix(waterColorFinal, foamColor, foam * 0.7);
-                    gl_FragColor.rgb += subsurface * vec3(0.3, 0.6, 0.9) * 0.35;
-                    gl_FragColor.a = 0.92;
-                    `
-                );
-            };
-
-            waterMesh = new THREE.Mesh(geometry, waterMaterial);
-            waterMesh.rotation.x = -Math.PI * 0.5;
-            waterMesh.receiveShadow = true;
-            scene.add(waterMesh);
-
-            // 保存 uniform 引用
-            waterMesh.userData.shader = waterMaterial;
-        }
-
-        function updateWaterParams() {
-            if (!waterMesh || !waterMesh.userData.shader) return;
-            
-            const mat = waterMesh.userData.shader;
-            if (mat.uniforms) {
-                mat.uniforms.waveHeight.value = params.waveHeight;
-                mat.uniforms.waveSpeed.value = params.waveSpeed;
-                mat.uniforms.windDir.value = params.windDirection * Math.PI / 180;
-                mat.uniforms.foamIntensity.value = params.foamIntensity;
-                mat.color.set(params.waterColor);
-            }
-        }
-
-        function setupControls() {
-            // 简单滑块绑定
-            const ids = ['waveHeight', 'waveSpeed', 'windDir', 'foam'];
-            ids.forEach(id => {
-                const slider = document.getElementById(id);
-                const valSpan = document.getElementById(id + 'Val');
-                
-                slider.addEventListener('input', () => {
-                    params[id === 'waveHeight' ? 'waveHeight' : 
-                           id === 'waveSpeed' ? 'waveSpeed' :
-                           id === 'windDir' ? 'windDirection' : 'foamIntensity'] = parseFloat(slider.value);
-                    valSpan.textContent = parseFloat(slider.value).toFixed(1);
-                    updateWaterParams();
-                });
-            });
-
-            // 水色
-            document.getElementById('waterColor').addEventListener('input', (e) => {
-                params.waterColor = e.target.value;
-                if (waterMesh) waterMesh.material.color.set(params.waterColor);
-            });
-
-            // 键盘控制
-            document.addEventListener('keydown', (e) => {
-                if (e.key === ' ') {
-                    e.preventDefault();
-                    autoRotate = !autoRotate;
-                }
-                if (e.key.toLowerCase() === 'r') {
-                    // 重置相机
-                    camera.position.set(0, 35, 85);
-                    controls.target.set(0, 0, 0);
-                    controls.update();
-                }
-            });
-        }
-
-        function setupInteractions() {
-            const raycaster = new THREE.Raycaster();
-            const mouse = new THREE.Vector2();
-
-            renderer.domElement.addEventListener('click', (event) => {
-                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-                
-                raycaster.setFromCamera(mouse, camera);
-                const intersects = raycaster.intersectObject(waterMesh);
-                
-                if (intersects.length > 0) {
-                    const point = intersects[0].point;
-                    // 添加涟漪
-                    ripples.push({
-                        x: point.x,
-                        y: point.z,
-                        time: time,
-                        strength: 2.8
-                    });
-                    if (ripples.length > 6) ripples.shift();
-                }
-            });
-        }
-
-        function animate() {
-            requestAnimationFrame(animate);
-            
-            time += 0.016 * params.waveSpeed;
-
-            if (waterMesh && waterMesh.userData.shader && waterMesh.userData.shader.uniforms) {
-                waterMesh.userData.shader.uniforms.time.value = time;
-                
-                // 更新涟漪
-                for (let i = ripples.length - 1; i >= 0; i--) {
-                    const r = ripples[i];
-                    if (time - r.time > 4.5) {
-                        ripples.splice(i, 1);
-                    }
-                }
-            }
-
-            if (autoRotate) {
-                camera.position.x = Math.sin(time * 0.12) * 95;
-                camera.position.z = Math.cos(time * 0.12) * 95 + 20;
-                camera.lookAt(0, 0, 0);
-            }
-
-            controls.update();
-            renderer.render(scene, camera);
-        }
-
-        function onResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        // WebGL 降级版本（简单但可用）
-        function initWebGLFallback() {
-            renderer = new THREE.WebGLRenderer({ antialias: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            document.body.appendChild(renderer.domElement);
-
-            scene = new THREE.Scene();
-            camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.5, 2000);
-            camera.position.set(0, 35, 85);
-
-            controls = new OrbitControls(camera, renderer.domElement);
-            controls.enableDamping = true;
-
-            const sun = new THREE.DirectionalLight(0xfff5e6, 1.5);
-            sun.position.set(80, 120, 60);
-            scene.add(sun);
-            scene.add(new THREE.AmbientLight(0x445566, 0.5));
-
-            const geometry = new THREE.PlaneGeometry(280, 280, 128, 128);
-            const material = new THREE.MeshPhongMaterial({
-                color: params.waterColor,
-                shininess: 85,
-                specular: 0x112244,
-                flatShading: false
-            });
-
-            waterMesh = new THREE.Mesh(geometry, material);
-            waterMesh.rotation.x = -Math.PI * 0.5;
-            scene.add(waterMesh);
-
-            // 简单波浪动画
-            function animateFallback() {
-                requestAnimationFrame(animateFallback);
-                time += 0.016;
-
-                const pos = waterMesh.geometry.attributes.position;
-                for (let i = 0; i < pos.count; i++) {
-                    const x = pos.getX(i);
-                    const z = pos.getZ(i);
-                    let y = Math.sin(x * 0.07 + time) * params.waveHeight * 0.6 +
-                            Math.sin(z * 0.09 + time * 1.3) * params.waveHeight * 0.4;
-                    pos.setY(i, y);
-                }
-                pos.needsUpdate = true;
-                waterMesh.geometry.computeVertexNormals();
-
-                if (autoRotate) {
-                    camera.position.x = Math.sin(time * 0.1) * 90;
-                    camera.position.z = Math.cos(time * 0.1) * 90;
-                    camera.lookAt(0, 0, 0);
-                }
-                controls.update();
-                renderer.render(scene, camera);
-            }
-            animateFallback();
-            
-            // 绑定控制
-            setupControls();
-            document.getElementById('status').textContent = '⚠️ 使用 WebGL 降级版（波浪效果简化）';
-        }
-
-        // 启动
-        init();
-    </script>
+    init().catch(error => {
+      console.error(error);
+      status.textContent = '渲染初始化失败';
+      errorBox.style.display = 'block';
+      errorBox.innerHTML = `<strong>无法启动海洋模拟</strong><br><br>${String(error.message || error)}<br><br>请使用支持 WebGL 2 的最新版 Chrome、Edge 或 Firefox。`;
+    });
+  </script>
 </body>
 </html>
