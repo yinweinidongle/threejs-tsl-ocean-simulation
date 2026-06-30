@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#07131f">
-  <title>Three.js TSL 海洋模拟</title>
+  <link rel="icon" href="data:,">
+  <title>Three.js 远洋模拟</title>
   <style>
     :root { color-scheme: dark; font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
     * { box-sizing: border-box; }
@@ -32,140 +33,136 @@
 </head>
 <body>
   <section id="intro" class="glass">
-    <h1>TSL Ocean Lab</h1>
-    <p>拖动旋转 · 滚轮缩放 · 空格切换自动巡航 · R 重置视角<br>由 Three.js WebGPU Renderer 与 TSL 节点材质实时驱动</p>
+    <h1>Open Ocean</h1>
+    <p>拖动旋转 · 滚轮缩放 · 空格切换自动巡航 · R 重置视角<br>实时反射、动态法线与大气散射共同构成远洋光照</p>
   </section>
   <aside id="panel" class="glass">
     <h2>Ocean controls</h2>
-    <div class="row"><label for="waveHeight">波浪高度 <output id="waveHeightVal">2.5</output></label><input id="waveHeight" type="range" min="0.5" max="7" step="0.1" value="2.5"></div>
+    <div class="row"><label for="waveHeight">波浪扭曲 <output id="waveHeightVal">3.7</output></label><input id="waveHeight" type="range" min="0" max="8" step="0.1" value="3.7"></div>
     <div class="row"><label for="waveSpeed">波浪速度 <output id="waveSpeedVal">1.0</output></label><input id="waveSpeed" type="range" min="0.2" max="3" step="0.1" value="1"></div>
-    <div class="row"><label for="windDir">风向 <output id="windDirVal">45°</output></label><input id="windDir" type="range" min="0" max="360" step="5" value="45"></div>
-    <div class="row"><label for="foam">泡沫强度 <output id="foamVal">0.6</output></label><input id="foam" type="range" min="0" max="1.4" step="0.05" value="0.6"></div>
+    <div class="row"><label for="windDir">太阳方位 <output id="windDirVal">180°</output></label><input id="windDir" type="range" min="-180" max="180" step="1" value="180"></div>
+    <div class="row"><label for="foam">波纹尺度 <output id="foamVal">1.0</output></label><input id="foam" type="range" min="0.1" max="10" step="0.1" value="1"></div>
     <div class="color-row"><label for="waterColor">深水颜色</label><input id="waterColor" type="color" value="#075985"></div>
   </aside>
   <div id="status">正在初始化渲染器…</div>
   <div id="error"></div>
 
   <script type="importmap">
-  {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/webgpu":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.webgpu.js","three/tsl":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.tsl.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"}}
+  {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.185.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.185.0/examples/jsm/"}}
   </script>
   <script type="module">
-    import * as THREE from 'three/webgpu';
-    import { color, mix, positionLocal, sin, smoothstep, uniform, vec3 } from 'three/tsl';
+    import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { Water } from 'three/addons/objects/Water.js';
+    import { Sky } from 'three/addons/objects/Sky.js';
 
-    const params = { waveHeight: 2.5, waveSpeed: 1, windDirection: 45, foamIntensity: .6, waterColor: '#075985' };
+    const params = { distortion: 3.7, speed: 1, azimuth: 180, size: 1, waterColor: '#075985', elevation: 3.5 };
     const state = { autoRotate: false };
     const status = document.querySelector('#status');
     const errorBox = document.querySelector('#error');
-    let renderer, scene, camera, controls, water;
-
-    const timeNode = uniform(0);
-    const heightNode = uniform(params.waveHeight);
-    const speedNode = uniform(params.waveSpeed);
-    const windNode = uniform(THREE.MathUtils.degToRad(params.windDirection));
-    const foamNode = uniform(params.foamIntensity);
-    const deepColorNode = uniform(new THREE.Color(params.waterColor));
+    let renderer, scene, camera, controls, water, sky, environment;
+    const sun = new THREE.Vector3();
+    const timer = new THREE.Timer();
 
     async function init() {
-      renderer = new THREE.WebGPURenderer({ antialias: true, powerPreference: 'high-performance' });
+      renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
       renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
       renderer.setSize(innerWidth, innerHeight);
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.05;
-      await renderer.init();
+      renderer.toneMappingExposure = .55;
       document.body.prepend(renderer.domElement);
 
       scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x07131f);
-      scene.fog = new THREE.FogExp2(0x8bb8cc, .0034);
-      camera = new THREE.PerspectiveCamera(56, innerWidth / innerHeight, .1, 1200);
-      camera.position.set(58, 42, 82);
-      camera.lookAt(0, 0, 0);
+      camera = new THREE.PerspectiveCamera(55, innerWidth / innerHeight, 1, 20000);
+      camera.position.set(30, 30, 100);
 
       controls = new OrbitControls(camera, renderer.domElement);
       controls.enableDamping = true;
       controls.dampingFactor = .055;
-      controls.minDistance = 24;
-      controls.maxDistance = 260;
-      controls.maxPolarAngle = Math.PI * .49;
-      controls.target.set(0, 0, 0);
+      controls.minDistance = 40;
+      controls.maxDistance = 200;
+      controls.maxPolarAngle = Math.PI * .495;
+      controls.target.set(0, 10, 0);
       controls.update();
 
-      scene.add(new THREE.HemisphereLight(0xbde9ff, 0x09253b, 2.4));
-      const sun = new THREE.DirectionalLight(0xffe0b0, 3.2);
-      sun.position.set(-60, 90, 30);
-      scene.add(sun);
-      createSky();
       createOcean();
+      createSky();
+      updateSun();
       bindControls();
       addEventListener('resize', resize);
       addEventListener('keydown', onKey);
 
-      const backend = navigator.gpu ? 'WebGPU' : 'WebGL 2 fallback';
-      status.textContent = `${backend} · TSL 节点材质运行中`;
+      status.textContent = 'WebGL · 实时反射海洋运行中';
       status.classList.add('ready');
       renderer.setAnimationLoop(render);
     }
 
-    function createSky() {
-      const geometry = new THREE.SphereGeometry(650, 32, 16);
-      const material = new THREE.MeshBasicMaterial({ color: 0x8cc8df, side: THREE.BackSide, fog: false });
-      scene.add(new THREE.Mesh(geometry, material));
-    }
-
     function createOcean() {
-      const geometry = new THREE.PlaneGeometry(420, 420, 220, 220);
-      geometry.rotateX(-Math.PI / 2);
-      const x = positionLocal.x;
-      const z = positionLocal.z;
-      const wx = windNode.cos();
-      const wz = windNode.sin();
-      const alongWind = x.mul(wx).add(z.mul(wz));
-      const acrossWind = x.mul(wz.negate()).add(z.mul(wx));
-      const t = timeNode.mul(speedNode);
-      const waveA = sin(alongWind.mul(.072).sub(t.mul(1.15))).mul(heightNode.mul(.58));
-      const waveB = sin(acrossWind.mul(.13).add(t.mul(1.62))).mul(heightNode.mul(.27));
-      const waveC = sin(x.add(z).mul(.245).sub(t.mul(2.1))).mul(heightNode.mul(.1));
-      const elevation = waveA.add(waveB).add(waveC);
-
-      const material = new THREE.MeshStandardNodeMaterial({ metalness: .08, roughness: .2, side: THREE.DoubleSide });
-      material.positionNode = vec3(x, elevation, z);
-      const crest = smoothstep(heightNode.mul(.42), heightNode.mul(.82), elevation).mul(foamNode);
-      material.colorNode = mix(deepColorNode, color(0x83d9ed), crest);
-      material.roughnessNode = mix(uniform(.18), uniform(.62), crest);
-      water = new THREE.Mesh(geometry, material);
+      const normals = new THREE.TextureLoader().load('https://threejs.org/examples/textures/waternormals.jpg');
+      normals.wrapS = normals.wrapT = THREE.RepeatWrapping;
+      water = new Water(new THREE.PlaneGeometry(10000, 10000), {
+        textureWidth: 512,
+        textureHeight: 512,
+        waterNormals: normals,
+        sunDirection: new THREE.Vector3(),
+        sunColor: 0xffffff,
+        waterColor: new THREE.Color(params.waterColor),
+        distortionScale: params.distortion,
+        fog: false
+      });
+      water.rotation.x = -Math.PI / 2;
       scene.add(water);
     }
 
+    function createSky() {
+      sky = new Sky();
+      sky.scale.setScalar(10000);
+      scene.add(sky);
+      const u = sky.material.uniforms;
+      u.turbidity.value = 10;
+      u.rayleigh.value = 2;
+      u.mieCoefficient.value = .005;
+      u.mieDirectionalG.value = .8;
+      if (u.cloudCoverage) { u.cloudCoverage.value = .28; u.cloudDensity.value = .35; u.cloudElevation.value = .45; }
+    }
+
+    function updateSun() {
+      const phi = THREE.MathUtils.degToRad(90 - params.elevation);
+      const theta = THREE.MathUtils.degToRad(params.azimuth);
+      sun.setFromSphericalCoords(1, phi, theta);
+      sky.material.uniforms.sunPosition.value.copy(sun);
+      water.material.uniforms.sunDirection.value.copy(sun).normalize();
+      environment?.dispose();
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      const environmentScene = new THREE.Scene();
+      environmentScene.add(sky);
+      environment = pmrem.fromScene(environmentScene);
+      scene.add(sky);
+      scene.environment = environment.texture;
+      pmrem.dispose();
+    }
+
     function bindControls() {
-      const bindings = {
-        waveHeight: [heightNode, 'waveHeightVal', v => v.toFixed(1)],
-        waveSpeed: [speedNode, 'waveSpeedVal', v => v.toFixed(1)],
-        foam: [foamNode, 'foamVal', v => v.toFixed(2)]
-      };
-      for (const [id, [node, outputId, format]] of Object.entries(bindings)) {
-        document.querySelector(`#${id}`).addEventListener('input', e => {
-          const value = Number(e.target.value); params[id === 'foam' ? 'foamIntensity' : id] = value;
-          node.value = value; document.querySelector(`#${outputId}`).value = format(value);
-        });
-      }
+      document.querySelector('#waveHeight').addEventListener('input', e => { params.distortion = Number(e.target.value); water.material.uniforms.distortionScale.value = params.distortion; document.querySelector('#waveHeightVal').value = params.distortion.toFixed(1); });
+      document.querySelector('#waveSpeed').addEventListener('input', e => { params.speed = Number(e.target.value); document.querySelector('#waveSpeedVal').value = params.speed.toFixed(1); });
+      document.querySelector('#foam').addEventListener('input', e => { params.size = Number(e.target.value); water.material.uniforms.size.value = params.size; document.querySelector('#foamVal').value = params.size.toFixed(1); });
       document.querySelector('#windDir').addEventListener('input', e => {
-        params.windDirection = Number(e.target.value); windNode.value = THREE.MathUtils.degToRad(params.windDirection);
-        document.querySelector('#windDirVal').value = `${params.windDirection}°`;
+        params.azimuth = Number(e.target.value); document.querySelector('#windDirVal').value = `${params.azimuth}°`; updateSun();
       });
       document.querySelector('#waterColor').addEventListener('input', e => {
-        params.waterColor = e.target.value; deepColorNode.value.set(params.waterColor);
+        params.waterColor = e.target.value; water.material.uniforms.waterColor.value.set(params.waterColor);
       });
     }
 
     function onKey(event) {
       if (event.code === 'Space') { event.preventDefault(); state.autoRotate = !state.autoRotate; }
-      if (event.key.toLowerCase() === 'r') { camera.position.set(58, 42, 82); controls.target.set(0, 0, 0); controls.update(); }
+      if (event.key.toLowerCase() === 'r') { camera.position.set(30, 30, 100); controls.target.set(0, 10, 0); controls.update(); }
     }
     function resize() { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); }
-    function render(timestamp) {
-      timeNode.value = timestamp * .001;
+    function render() {
+      timer.update();
+      water.material.uniforms.time.value += Math.min(timer.getDelta(), .05) * params.speed;
+      if (sky.material.uniforms.time) sky.material.uniforms.time.value = performance.now() * .001;
       controls.autoRotate = state.autoRotate;
       controls.autoRotateSpeed = .6;
       controls.update();
